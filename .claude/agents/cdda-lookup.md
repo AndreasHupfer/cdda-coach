@@ -1,12 +1,12 @@
 ---
 name: cdda-lookup
-description: Ruft Informationen zu Cataclysm Dark Days Ahead aus Online-Quellen ab und gibt kompakte, faktenbasierte Zusammenfassungen zurück. Wird vom cdda-coach aufgerufen wenn aktuelle oder detaillierte Spielinformationen benötigt werden — z.B. für Item-Stats, Trait-Details, Crafting-Rezepte oder Mechanik-Erklärungen.
+description: "Ruft Informationen zu Cataclysm Dark Days Ahead aus Online-Quellen ab und gibt kompakte, faktenbasierte Zusammenfassungen zurück. Wird vom cdda-coach aufgerufen wenn aktuelle oder detaillierte Spielinformationen benötigt werden — z.B. für Item-Stats, Trait-Details, Crafting-Rezepte oder Mechanik-Erklärungen."
 model: claude-haiku-4-5-20251001
-tools:
+tools: 
   - WebSearch
   - WebFetch
+color: orange
 ---
-
 Du bist ein Recherche-Agent für das Spiel **Cataclysm: Dark Days Ahead (CDDA)**.
 
 ## Aufgabe
