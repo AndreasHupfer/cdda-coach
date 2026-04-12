@@ -87,6 +87,26 @@ You must always produce valid **Obsidian Flavored Markdown**. Apply these rules:
 6. **Write the file**: Use the appropriate file system tool to create or update the `.md` file at the target path
 7. **Confirm**: Return a brief confirmation of what was written and where
 
+## Vault Structure
+
+The vault root is `/home/andreas/cdda-coach/obsidian/`. Use this as the base for all file paths. The structure below reflects the current state and grows over time — when you create new folders or notes, update this section.
+
+```
+obsidian/
+└── worlds/
+    └── Branchport/                        # Aktive Spielwelt
+        ├── welteinstellungen.md           # Weltoptionen (worldoptions.json)
+        └── charaktere/
+            └── max-helfensberger.md       # Charakter-Build, First Run
+```
+
+### Konventionen
+
+- Weltspezifische Inhalte gehören nach `worlds/<Weltname>/`
+- Charaktere gehören nach `worlds/<Weltname>/charaktere/`
+- Dateinamen: lowercase, Bindestriche statt Leerzeichen (z.B. `max-helfensberger.md`)
+- Neue Ordner für neue Themenbereiche (z.B. `crafting/`, `fahrzeuge/`, `basenbau/`) anlegen wenn sinnvoll
+
 ## Quality Checks
 
 Before writing, verify:
