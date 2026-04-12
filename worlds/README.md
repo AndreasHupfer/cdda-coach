@@ -15,4 +15,5 @@ worlds/
 
 | Welt | Schwierigkeit | Schwerpunkt |
 |---|---|---|
+| [realistisch-einsteiger](./realistisch-einsteiger/world.md) | Einsteiger | Realistisches Setting, langsame Mutation, lange Jahreszeiten |
 | [survival-hardcore](./survival-hardcore/world.md) | Mittel-Schwer | Knappe Ressourcen, schnelle Mutation, kurze Jahreszeiten |

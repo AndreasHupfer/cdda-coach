@@ -52,6 +52,16 @@ Der Coach antwortet auf Deutsch (außer der User schreibt Englisch) und ruft bei
 | `json-canvas` | `/json-canvas` | Visuelle Canvas-Dateien (`.canvas`) |
 | `defuddle` | `/defuddle` | Webseiten als sauberes Markdown extrahieren |
 
+## Spielinstallation
+
+| | Pfad |
+|---|---|
+| **Game-Verzeichnis** | `/home/andreas/opt/dda/game0` |
+| **Save-Verzeichnis** | `/home/andreas/opt/dda/game0/save` |
+| **Aktive Welt** | `Cowles` (`/home/andreas/opt/dda/game0/save/Cowles/worldoptions.json`) |
+
+Beim direkten Bearbeiten von Weltoptionen immer die aktive `worldoptions.json` in diesem Pfad editieren.
+
 ## Konventionen
 
 - Antwortsprache: Deutsch (default), Englisch wenn User Englisch schreibt
