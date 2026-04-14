@@ -22,7 +22,13 @@ from subprocess import PIPE, DEVNULL
 try:
     import anthropic
 except ImportError:
-    print("anthropic nicht installiert. Bitte: pip install anthropic colorama")
+    print("anthropic nicht installiert. Bitte: pip install anthropic colorama pyzstd")
+    sys.exit(1)
+
+try:
+    import pyzstd
+except ImportError:
+    print("pyzstd nicht installiert. Bitte: pip install pyzstd")
     sys.exit(1)
 
 try:
@@ -37,13 +43,45 @@ except ImportError:
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).parent
 SKILL_FILE = SCRIPT_DIR / ".claude" / "skills" / "cdda-coach.md"
-DEFAULT_SAVE_DIR = Path.home() / "opt" / "dda" / "game0" / "save"
 DEFAULT_OBSIDIAN_DIR = Path.home() / "obsidian-MSB"
+
+
+def load_env_file() -> dict[str, str]:
+    """Liest Schlüssel-Wert-Paare aus .env im Projektverzeichnis."""
+    env_file = SCRIPT_DIR / ".env"
+    result: dict[str, str] = {}
+    if not env_file.exists():
+        return result
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        result[key.strip()] = value.strip().strip('"').strip("'")
+    return result
+
+
+_ENV = load_env_file()
+
+# Werte aus .env in os.environ übernehmen (nur wenn noch nicht gesetzt)
+for _k, _v in _ENV.items():
+    os.environ.setdefault(_k, _v)
+
+
+def _default_save_dir() -> Path:
+    cdda_root = _ENV.get("CDDA_ROOT")
+    if cdda_root:
+        return Path(cdda_root) / "save"
+    return Path.home() / "opt" / "dda" / "game0" / "save"
+
+
+DEFAULT_SAVE_DIR = _default_save_dir()
 MODEL = "claude-sonnet-4-6"
 MAX_TOKENS = 1024
 DEBOUNCE_SECONDS = 2.0
 DEFAULT_SEASON_LENGTH = 91  # Tage pro Jahreszeit (CDDA-Standard)
 
+ZSTD_MAGIC = b"\x28\xb5\x2f\xfd"
 BP_NAMES = ["torso", "head", "l_arm", "r_arm", "l_leg", "r_leg"]
 SEASON_NAMES = ["Frühling", "Sommer", "Herbst", "Winter"]
 
@@ -128,76 +166,79 @@ def calculate_game_date(turn: int, season_length: int = DEFAULT_SEASON_LENGTH) -
     return f"Jahr {year}, {season} Tag {day_in_season}, {current_hour:02d}:{current_minute:02d}"
 
 
+def decompress_zzip(path: Path) -> bytes:
+    """Dekomprimiert eine CDDA .sav.zzip-Datei (zstd-Payload nach Custom-Header)."""
+    data = path.read_bytes()
+    offset = data.find(ZSTD_MAGIC)
+    if offset == -1:
+        raise ValueError(f"Kein zstd-Frame in {path} gefunden")
+    dctx = pyzstd.ZstdDecompressor()
+    return dctx.decompress(data[offset:], max_length=50 * 1024 * 1024)
+
+
 def extract_char_data(sav_path: Path) -> dict | None:
-    """Parst die .sav-JSON-Datei und extrahiert einen kompakten Charakter-Snapshot."""
+    """Parst die .sav.zzip-Datei und extrahiert einen kompakten Charakter-Snapshot."""
     try:
-        raw: dict = json.loads(sav_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as e:
+        if sav_path.suffix == ".zzip":
+            raw_bytes = decompress_zzip(sav_path)
+            raw: dict = json.loads(raw_bytes)
+        else:
+            raw = json.loads(sav_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError, ValueError) as e:
         print(f"{Fore.YELLOW}Konnte {sav_path.name} nicht lesen: {e}{Style.RESET_ALL}")
         return None
 
-    # Validierung: Charakter-Save erkennen
-    if "str_cur" not in raw:
+    # Validierung: Game-Save mit player-Block erkennen
+    p = raw.get("player")
+    if not isinstance(p, dict):
         return None
 
     # Stats
     stats = {
-        "str": raw.get("str_cur"),
-        "dex": raw.get("dex_cur"),
-        "int": raw.get("int_cur"),
-        "per": raw.get("per_cur"),
+        "str": p.get("str_cur"),
+        "dex": p.get("dex_cur"),
+        "int": p.get("int_cur"),
+        "per": p.get("per_cur"),
     }
 
-    # HP nach Körperteil
-    hp_cur = raw.get("hp_cur", [])
-    hp_max = raw.get("hp_max", [])
+    # HP nach Körperteil (neues Format: body-Dict, enthält nur vorhandene Parts)
+    body = p.get("body", {})
     hp: dict[str, str] = {}
-    for i, bp in enumerate(BP_NAMES):
-        cur = hp_cur[i] if i < len(hp_cur) else "?"
-        max_ = hp_max[i] if i < len(hp_max) else "?"
-        hp[bp] = f"{cur}/{max_}"
+    for bp, part in body.items():
+        if isinstance(part, dict) and "hp_cur" in part:
+            hp[bp] = f"{part['hp_cur']}/{part.get('hp_max', '?')}"
 
     # Bedürfnisse
-    needs = {k: raw.get(k) for k in ("hunger", "thirst", "fatigue", "pain", "stim")}
+    needs = {k: p.get(k) for k in ("hunger", "thirst", "sleepiness", "pain", "stamina")}
 
     # Morale (Summe)
-    morale_list = raw.get("morale", [])
+    morale_list = p.get("morale", [])
     morale_total = sum(m.get("val", 0) for m in morale_list if isinstance(m, dict))
 
     # Skills: Top-10 nach Level (nur > 0)
-    raw_skills = raw.get("skills", {})
+    raw_skills = p.get("skills", {})
     skill_dict: dict[str, int] = {}
     if isinstance(raw_skills, dict):
-        for name, data in raw_skills.items():
-            if isinstance(data, dict):
-                lvl = data.get("level", 0)
-            elif isinstance(data, (int, float)):
-                lvl = int(data)
-            else:
-                lvl = 0
+        for skill_name, data in raw_skills.items():
+            lvl = data.get("level", 0) if isinstance(data, dict) else int(data or 0)
             if lvl > 0:
-                skill_dict[name] = lvl
-    elif isinstance(raw_skills, list):
-        for entry in raw_skills:
-            if isinstance(entry, (list, tuple)) and len(entry) >= 2:
-                name, data = entry[0], entry[1]
-                lvl = data.get("level", 0) if isinstance(data, dict) else 0
-                if lvl > 0:
-                    skill_dict[str(name)] = lvl
+                skill_dict[skill_name] = lvl
     top_skills = dict(sorted(skill_dict.items(), key=lambda x: x[1], reverse=True)[:10])
 
-    # Effects (max. 8)
-    raw_effects = raw.get("effects", [])
-    if isinstance(raw_effects, list):
+    # Effects (max. 8) — neues Format: Dict von Dicts
+    raw_effects = p.get("effects", {})
+    if isinstance(raw_effects, dict):
+        effects = list(raw_effects.keys())[:8]
+    elif isinstance(raw_effects, list):
         effects = [
-            e.get("type", e.get("eff_type", str(e))) if isinstance(e, dict) else str(e)
+            e.get("type", str(e)) if isinstance(e, dict) else str(e)
             for e in raw_effects[:8]
         ]
     else:
         effects = []
 
     # Bioniken (max. 10)
-    raw_bionics = raw.get("bionics", [])
+    raw_bionics = p.get("bionics", [])
     if isinstance(raw_bionics, list):
         bionics = [
             b.get("id", str(b)) if isinstance(b, dict) else str(b)
@@ -207,7 +248,7 @@ def extract_char_data(sav_path: Path) -> dict | None:
         bionics = []
 
     # Mutationen (max. 8)
-    raw_mutations = raw.get("mutations", {})
+    raw_mutations = p.get("mutations", {})
     if isinstance(raw_mutations, dict):
         mutations = list(raw_mutations.keys())[:8]
     elif isinstance(raw_mutations, list):
@@ -219,11 +260,11 @@ def extract_char_data(sav_path: Path) -> dict | None:
         mutations = []
 
     # Inventar-Anzahl
-    worn_count = len(raw.get("worn", []))
-    inv_count = len(raw.get("inv", []))
+    worn_count = len(p.get("worn", []))
+    inv_count = len(p.get("inv", []))
 
     # Charakter-Name und Spieldatum
-    char_name: str = raw.get("name", sav_path.stem)
+    char_name: str = p.get("name", sav_path.stem)
     turn = raw.get("turn", 0)
     game_date = calculate_game_date(turn)
 
@@ -396,15 +437,22 @@ def write_obsidian_note(obsidian_dir: Path, char_name: str, briefing: str) -> No
 # SAVE-DATEI FINDEN
 # ---------------------------------------------------------------------------
 def find_sav_file(save_dir: Path) -> tuple[Path, str] | None:
-    """Findet die zuletzt modifizierte .sav-Datei im Save-Baum."""
-    sav_files = [
-        f for f in save_dir.rglob("*.sav")
-        if not f.name.endswith(".sav.backup")
-    ]
+    """Findet die zuletzt modifizierte .sav.zzip-Datei im Save-Baum."""
+    sav_files = list(save_dir.rglob("*.sav.zzip"))
+    if not sav_files:
+        # Fallback: unkomprimierte .sav (ältere CDDA-Versionen)
+        sav_files = [f for f in save_dir.rglob("*.sav") if not f.name.endswith(".backup")]
     if not sav_files:
         return None
     newest = max(sav_files, key=lambda f: f.stat().st_mtime)
-    return newest, newest.stem
+    # Charakter-Name aus base64-kodiertem Dateinamen dekodieren
+    import base64
+    stem = newest.name.replace(".sav.zzip", "").replace(".sav", "")
+    try:
+        char_name = base64.b64decode(stem.lstrip("#") + "==").decode("utf-8")
+    except Exception:
+        char_name = stem
+    return newest, char_name
 
 
 # ---------------------------------------------------------------------------
@@ -470,7 +518,7 @@ def watch_loop(save_dir: Path, obsidian_dir: Path) -> None:
 
     for line in _inotify_proc.stdout:  # type: ignore[union-attr]
         path = line.strip()
-        if path.endswith(".sav") or path.endswith("world_timestamp.json"):
+        if path.endswith(".sav.zzip") or path.endswith(".sav") or path.endswith("world_timestamp.json"):
             if _debounce_timer is not None:
                 _debounce_timer.cancel()
             _debounce_timer = threading.Timer(
