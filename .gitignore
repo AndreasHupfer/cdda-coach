@@ -7,3 +7,7 @@
 
 # Obsidian App-Einstellungen (lokal, nicht versionieren)
 obsidian/.obsidian/
+
+# Python
+__pycache__/
+*.pyc
